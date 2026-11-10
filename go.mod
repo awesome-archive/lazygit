@@ -1,62 +1,79 @@
 module github.com/jesseduffield/lazygit
 
+go 1.26.0
+
+// This is necessary to ignore test files when executing gofumpt.
+ignore ./test
+
+// Likewise for worktrees that are nested in the main tree.
+ignore ./.worktrees
+
 require (
-	github.com/aws/aws-sdk-go v1.15.21
-	github.com/bgentry/go-netrc v0.0.0-20140422174119-9fd32a8b3d3d
+	dario.cat/mergo v1.0.2
+	github.com/adrg/xdg v0.5.3
+	github.com/atotto/clipboard v0.1.4
+	github.com/aybabtme/humanlog v0.4.1
+	github.com/cli/go-gh/v2 v2.16.2
 	github.com/cloudfoundry/jibber_jabber v0.0.0-20151120183258-bcc4c8345a21
-	github.com/davecgh/go-spew v1.1.0
-	github.com/emirpasic/gods v1.9.0
-	github.com/fatih/color v1.7.0
-	github.com/fsnotify/fsnotify v1.4.7
-	github.com/go-ini/ini v1.38.2
-	github.com/golang-collections/collections v0.0.0-20130729185459-604e922904d3
-	github.com/hashicorp/go-cleanhttp v0.0.0-20171218145408-d5fe4b57a186
-	github.com/hashicorp/go-getter v0.0.0-20180809191950-4bda8fa99001
-	github.com/hashicorp/go-safetemp v0.0.0-20180326211150-b1a1dbde6fdc
-	github.com/hashicorp/go-version v1.0.0
-	github.com/hashicorp/hcl v0.0.0-20180404174102-ef8a98b0bbce
-	github.com/heroku/rollrus v0.0.0-20180515183152-fc0cef2ff331
-	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99
-	github.com/jesseduffield/go-getter v0.0.0-20180822080847-906e15686e63
-	github.com/jesseduffield/gocui v0.0.0-20180921065632-03e26ff3f1de
-	github.com/jesseduffield/termbox-go v0.0.0-20180919093808-1e272ff78dcb
-	github.com/jmespath/go-jmespath v0.0.0-20160202185014-0b12d6b521d8
-	github.com/kardianos/osext v0.0.0-20170510131534-ae77be60afb1
-	github.com/kevinburke/ssh_config v0.0.0-20180317175531-9fc7bb800b55
-	github.com/magiconair/properties v1.8.0
-	github.com/mattn/go-colorable v0.0.9
-	github.com/mattn/go-isatty v0.0.3
-	github.com/mattn/go-runewidth v0.0.2
+	github.com/creack/pty v1.1.24
+	github.com/gdamore/tcell/v3 v3.6.0
+	github.com/go-errors/errors v1.5.1
+	github.com/gookit/color v1.6.1
+	github.com/integrii/flaggy v1.8.0
+	github.com/jesseduffield/generics v0.0.0-20250517122708-b0b4a53a6f5c
+	github.com/jesseduffield/lazycore v0.0.0-20221012050358-03d2e40243c5
+	github.com/kardianos/osext v0.0.0-20190222173326-2bc1f35cddc0
+	github.com/karimkhaleel/jsonschema v0.0.0-20231001195015-d933f0d94ea3
+	github.com/kyokomi/emoji/v2 v2.2.14
+	github.com/lucasb-eyer/go-colorful v1.4.1
 	github.com/mgutz/str v1.2.0
-	github.com/mitchellh/go-homedir v0.0.0-20180801233206-58046073cbff
-	github.com/mitchellh/go-testing-interface v0.0.0-20171004221916-a61a99592b77
-	github.com/mitchellh/mapstructure v0.0.0-20180715050151-f15292f7a699
-	github.com/nicksnyder/go-i18n v0.0.0-20180803040939-a16b91a3ba80
-	github.com/pelletier/go-buffruneio v0.2.0
-	github.com/pelletier/go-toml v1.2.0
-	github.com/pkg/errors v0.8.0
-	github.com/pmezard/go-difflib v1.0.0
-	github.com/sergi/go-diff v1.0.0
-	github.com/shibukawa/configdir v0.0.0-20170330084843-e180dbdc8da0
-	github.com/sirupsen/logrus v1.0.6
-	github.com/spf13/afero v1.1.1
-	github.com/spf13/cast v1.2.0
-	github.com/spf13/jwalterweatherman v0.0.0-20180814060501-14d3d4c51834
-	github.com/spf13/pflag v1.0.2
-	github.com/spf13/viper v1.1.0
-	github.com/spkg/bom v0.0.0-20160624110644-59b7046e48ad
-	github.com/src-d/gcfg v1.3.0
-	github.com/stretchr/testify v1.2.2
-	github.com/stvp/roll v0.0.0-20170522205222-3627a5cbeaea
-	github.com/tcnksm/go-gitconfig v0.1.2
-	github.com/ulikunitz/xz v0.5.4
-	github.com/xanzy/ssh-agent v0.2.0
-	golang.org/x/crypto v0.0.0-20180808211826-de0752318171
-	golang.org/x/net v0.0.0-20180811021610-c39426892332
-	golang.org/x/sys v0.0.0-20180810173357-98c5dad5d1a0
-	golang.org/x/text v0.3.0
-	gopkg.in/src-d/go-billy.v4 v4.2.0
-	gopkg.in/src-d/go-git.v4 v4.0.0-20180807092216-43d17e14b714
-	gopkg.in/warnings.v0 v0.1.2
-	gopkg.in/yaml.v2 v2.2.1
+	github.com/mitchellh/go-ps v1.0.0
+	github.com/petermattis/goid v0.0.0-20250813065127-a731cc31b4fe
+	github.com/rivo/uniseg v0.4.7
+	github.com/sahilm/fuzzy v0.1.3
+	github.com/samber/lo v1.53.0
+	github.com/sanity-io/litter v1.5.8
+	github.com/sasha-s/go-deadlock v0.3.9
+	github.com/sirupsen/logrus v1.10.2
+	github.com/spf13/afero v1.15.0
+	github.com/spkg/bom v1.0.1
+	github.com/stefanhaller/git-todo-parser v0.0.7-0.20250905083220-c50528f08304
+	github.com/stretchr/testify v1.12.1
+	github.com/xo/terminfo v1.2.0
+	golang.org/x/exp v0.0.0-20240719175910-8a7402abbf56
+	golang.org/x/sync v0.24.0
+	golang.org/x/sys v0.49.0
+	gopkg.in/ozeidan/fuzzy-patricia.v3 v3.0.0
+	gopkg.in/yaml.v3 v3.0.1
 )
+
+require (
+	github.com/bahlo/generic-list-go v0.2.0 // indirect
+	github.com/buger/jsonparser v1.1.2 // indirect
+	github.com/cli/safeexec v1.0.1 // indirect
+	github.com/clipperhouse/displaywidth v0.11.0 // indirect
+	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
+	github.com/fatih/color v1.9.0 // indirect
+	github.com/gdamore/encoding v1.0.1 // indirect
+	github.com/go-logfmt/logfmt v0.5.0 // indirect
+	github.com/hpcloud/tail v1.0.0 // indirect
+	github.com/invopop/jsonschema v0.10.0 // indirect
+	github.com/kr/logfmt v0.0.0-20210122060352-19f9bcb100e6 // indirect
+	github.com/mailru/easyjson v0.7.7 // indirect
+	github.com/mattn/go-colorable v0.1.13 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/onsi/ginkgo v1.10.3 // indirect
+	github.com/onsi/gomega v1.34.1 // indirect
+	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
+	golang.org/x/mod v0.41.0 // indirect
+	golang.org/x/term v0.46.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
+	golang.org/x/tools v0.49.0 // indirect
+	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
+	gopkg.in/fsnotify.v1 v1.4.7 // indirect
+	gopkg.in/tomb.v1 v1.0.0-20141024135613-dd632973f1e7 // indirect
+	mvdan.cc/gofumpt v0.11.0 // indirect
+)
+
+tool mvdan.cc/gofumpt

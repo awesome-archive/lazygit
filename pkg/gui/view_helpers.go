@@ -1,336 +1,183 @@
 package gui
 
 import (
-	"fmt"
-	"sort"
-	"strings"
+	"time"
 
-	"github.com/jesseduffield/gocui"
+	"github.com/jesseduffield/lazygit/pkg/gocui"
+	"github.com/jesseduffield/lazygit/pkg/gui/context"
+	"github.com/jesseduffield/lazygit/pkg/gui/types"
+	"github.com/jesseduffield/lazygit/pkg/tasks"
 	"github.com/jesseduffield/lazygit/pkg/utils"
 	"github.com/spkg/bom"
 )
 
-var cyclableViews = []string{"status", "files", "branches", "commits", "stash"}
-
-func (gui *Gui) refreshSidePanels(g *gocui.Gui) error {
-	gui.refreshBranches(g)
-	gui.refreshFiles(g)
-	gui.refreshCommits(g)
-	return nil
+func (gui *Gui) resetViewOrigin(v *gocui.View) {
+	v.SetCursor(0, 0)
+	v.SetOrigin(0, 0)
 }
 
-func (gui *Gui) nextView(g *gocui.Gui, v *gocui.View) error {
-	var focusedViewName string
-	if v == nil || v.Name() == cyclableViews[len(cyclableViews)-1] {
-		focusedViewName = cyclableViews[0]
-	} else {
-		for i := range cyclableViews {
-			if v.Name() == cyclableViews[i] {
-				focusedViewName = cyclableViews[i+1]
-				break
-			}
-			if i == len(cyclableViews)-1 {
-				message := gui.Tr.TemplateLocalize(
-					"IssntListOfViews",
-					Teml{
-						"name": v.Name(),
-					},
-				)
-				gui.Log.Info(message)
-				return nil
-			}
-		}
-	}
-	focusedView, err := g.View(focusedViewName)
-	if err != nil {
-		panic(err)
-	}
-	return gui.switchFocus(g, v, focusedView)
-}
+// Returns the number of lines that we should read initially from a cmd task so
+// that the scrollbar has the correct size, along with the number of lines after
+// which the view is filled and we can do a first refresh. Both count from the top
+// of the view. The task adds the lines above the view if it shows its content
+// where the view is (see LinesToRead.LinesAboveView).
+func (gui *Gui) linesToReadFromCmdTask(v *gocui.View) tasks.LinesToRead {
+	height := v.InnerHeight()
+	linesAboveView := v.OriginY()
 
-func (gui *Gui) previousView(g *gocui.Gui, v *gocui.View) error {
-	var focusedViewName string
-	if v == nil || v.Name() == cyclableViews[0] {
-		focusedViewName = cyclableViews[len(cyclableViews)-1]
-	} else {
-		for i := range cyclableViews {
-			if v.Name() == cyclableViews[i] {
-				focusedViewName = cyclableViews[i-1] // TODO: make this work properly
-				break
-			}
-			if i == len(cyclableViews)-1 {
-				message := gui.Tr.TemplateLocalize(
-					"IssntListOfViews",
-					Teml{
-						"name": v.Name(),
-					},
-				)
-				gui.Log.Info(message)
-				return nil
-			}
-		}
-	}
-	focusedView, err := g.View(focusedViewName)
-	if err != nil {
-		panic(err)
-	}
-	return gui.switchFocus(g, v, focusedView)
-}
+	linesForFirstRefresh := height + 10
 
-func (gui *Gui) newLineFocused(g *gocui.Gui, v *gocui.View) error {
-	mainView, _ := g.View("main")
-	mainView.SetOrigin(0, 0)
-
-	switch v.Name() {
-	case "menu":
-		return gui.handleMenuSelect(g, v)
-	case "status":
-		return gui.handleStatusSelect(g, v)
-	case "files":
-		return gui.handleFileSelect(g, v)
-	case "branches":
-		return gui.handleBranchSelect(g, v)
-	case "confirmation":
-		return nil
-	case "commitMessage":
-		return gui.handleCommitFocused(g, v)
-	case "main":
-		// TODO: pull this out into a 'view focused' function
-		gui.refreshMergePanel(g)
-		v.Highlight = false
-		return nil
-	case "commits":
-		return gui.handleCommitSelect(g, v)
-	case "stash":
-		return gui.handleStashEntrySelect(g, v)
-	case "staging":
-		return nil
-		// return gui.handleStagingSelect(g, v)
-	default:
-		panic(gui.Tr.SLocalize("NoViewMachingNewLineFocusedSwitchStatement"))
-	}
-}
-
-func (gui *Gui) returnFocus(g *gocui.Gui, v *gocui.View) error {
-	previousView, err := g.View(gui.State.PreviousView)
-	if err != nil {
-		// always fall back to files view if there's no 'previous' view stored
-		previousView, err = g.View("files")
-		if err != nil {
-			gui.Log.Error(err)
-		}
-	}
-	return gui.switchFocus(g, v, previousView)
-}
-
-// pass in oldView = nil if you don't want to be able to return to your old view
-func (gui *Gui) switchFocus(g *gocui.Gui, oldView, newView *gocui.View) error {
-	// we assume we'll never want to return focus to a confirmation panel i.e.
-	// we should never stack confirmation panels
-	if oldView != nil && oldView.Name() != "confirmation" {
-		oldView.Highlight = false
-		message := gui.Tr.TemplateLocalize(
-			"settingPreviewsViewTo",
-			Teml{
-				"oldViewName": oldView.Name(),
-			},
-		)
-		gui.Log.Info(message)
-
-		// second class panels should never have focus restored to them because
-		// once they lose focus they are effectively 'destroyed'
-		secondClassPanels := []string{"confirmation", "menu"}
-		if !utils.IncludesString(secondClassPanels, oldView.Name()) {
-			gui.State.PreviousView = oldView.Name()
+	// A search counts the matches in everything the view holds, so a re-render of a
+	// view that is being searched is read all the way to the end (as opening the
+	// search prompt reads it, see MainViewController.openSearch). Lines left unread
+	// hold matches the search doesn't know about, and would add themselves to the
+	// "x of y" as the user scrolled far enough to load them.
+	if v.IsSearching() {
+		return tasks.LinesToRead{
+			Total:               -1,
+			InitialRefreshAfter: linesForFirstRefresh,
+			LinesAboveView:      linesAboveView,
 		}
 	}
 
-	newView.Highlight = true
-	message := gui.Tr.TemplateLocalize(
-		"newFocusedViewIs",
-		Teml{
-			"newFocusedView": newView.Name(),
-		},
-	)
-	gui.Log.Info(message)
-	if _, err := g.SetCurrentView(newView.Name()); err != nil {
-		return err
+	// We want to read as many lines initially as necessary to let the
+	// scrollbar go to its minimum height, so that the scrollbar thumb doesn't
+	// change size as you scroll down.
+	minScrollbarHeight := 1
+	linesToReadForAccurateScrollbar := min(
+		// However, cap it at some arbitrary max limit, so that we don't get
+		// performance problems for huge monitors or tiny font sizes
+		height*(height-1)/minScrollbarHeight, 5000)
+
+	return tasks.LinesToRead{
+		// A view no more than a few lines tall needs fewer lines for its scrollbar
+		// than it takes to fill it, and the task must read at least those.
+		Total:               max(linesToReadForAccurateScrollbar, linesForFirstRefresh),
+		InitialRefreshAfter: linesForFirstRefresh,
+		LinesAboveView:      linesAboveView,
 	}
-	if _, err := g.SetViewOnTop(newView.Name()); err != nil {
-		return err
+}
+
+func (gui *Gui) cleanString(s string) string {
+	output := string(bom.Clean([]byte(s)))
+	return utils.NormalizeLinefeeds(output)
+}
+
+func (gui *Gui) setViewContent(v *gocui.View, s string) {
+	v.SetContent(gui.cleanString(s))
+}
+
+func (gui *Gui) currentViewName() string {
+	currentView := gui.g.CurrentView()
+	if currentView == nil {
+		return ""
 	}
-
-	g.Cursor = newView.Editable
-
-	return gui.newLineFocused(g, newView)
-}
-
-func (gui *Gui) getItemPosition(v *gocui.View) int {
-	gui.correctCursor(v)
-	_, cy := v.Cursor()
-	_, oy := v.Origin()
-	return oy + cy
-}
-
-func (gui *Gui) cursorUp(g *gocui.Gui, v *gocui.View) error {
-	// swallowing cursor movements in main
-	if v == nil || v.Name() == "main" {
-		return nil
-	}
-
-	ox, oy := v.Origin()
-	cx, cy := v.Cursor()
-	if err := v.SetCursor(cx, cy-1); err != nil && oy > 0 {
-		if err := v.SetOrigin(ox, oy-1); err != nil {
-			return err
-		}
-	}
-
-	gui.newLineFocused(g, v)
-	return nil
-}
-
-func (gui *Gui) cursorDown(g *gocui.Gui, v *gocui.View) error {
-	// swallowing cursor movements in main
-	if v == nil || v.Name() == "main" {
-		return nil
-	}
-	cx, cy := v.Cursor()
-	ox, oy := v.Origin()
-	ly := v.LinesHeight() - 1
-	_, height := v.Size()
-	maxY := height - 1
-
-	// if we are at the end we just return
-	if cy+oy == ly {
-		return nil
-	}
-
-	var err error
-	if cy < maxY {
-		err = v.SetCursor(cx, cy+1)
-	} else {
-		err = v.SetOrigin(ox, oy+1)
-	}
-	if err != nil {
-		return err
-	}
-
-	gui.newLineFocused(g, v)
-	return nil
-}
-
-func (gui *Gui) resetOrigin(v *gocui.View) error {
-	if err := v.SetCursor(0, 0); err != nil {
-		return err
-	}
-	return v.SetOrigin(0, 0)
-}
-
-// if the cursor down past the last item, move it to the last line
-func (gui *Gui) correctCursor(v *gocui.View) error {
-	cx, cy := v.Cursor()
-	ox, oy := v.Origin()
-	_, height := v.Size()
-	maxY := height - 1
-	ly := v.LinesHeight() - 1
-	if oy+cy <= ly {
-		return nil
-	}
-	newCy := utils.Min(ly, maxY)
-	if err := v.SetCursor(cx, newCy); err != nil {
-		return err
-	}
-	if err := v.SetOrigin(ox, ly-newCy); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (gui *Gui) renderString(g *gocui.Gui, viewName, s string) error {
-	g.Update(func(*gocui.Gui) error {
-		v, err := g.View(viewName)
-		// just in case the view disappeared as this function was called, we'll
-		// silently return if it's not found
-		if err != nil {
-			return nil
-		}
-		v.Clear()
-		output := string(bom.Clean([]byte(s)))
-		output = utils.NormalizeLinefeeds(output)
-		fmt.Fprint(v, output)
-		return nil
-	})
-	return nil
-}
-
-func (gui *Gui) optionsMapToString(optionsMap map[string]string) string {
-	optionsArray := make([]string, 0)
-	for key, description := range optionsMap {
-		optionsArray = append(optionsArray, key+": "+description)
-	}
-	sort.Strings(optionsArray)
-	return strings.Join(optionsArray, ", ")
-}
-
-func (gui *Gui) renderOptionsMap(g *gocui.Gui, optionsMap map[string]string) error {
-	return gui.renderString(g, "options", gui.optionsMapToString(optionsMap))
-}
-
-// TODO: refactor properly
-// i'm so sorry but had to add this getBranchesView
-func (gui *Gui) getFilesView(g *gocui.Gui) *gocui.View {
-	v, _ := g.View("files")
-	return v
-}
-
-func (gui *Gui) getCommitsView(g *gocui.Gui) *gocui.View {
-	v, _ := g.View("commits")
-	return v
-}
-
-func (gui *Gui) getCommitMessageView(g *gocui.Gui) *gocui.View {
-	v, _ := g.View("commitMessage")
-	return v
-}
-
-func (gui *Gui) getBranchesView(g *gocui.Gui) *gocui.View {
-	v, _ := g.View("branches")
-	return v
-}
-
-func (gui *Gui) getStagingView(g *gocui.Gui) *gocui.View {
-	v, _ := g.View("staging")
-	return v
-}
-
-func (gui *Gui) trimmedContent(v *gocui.View) string {
-	return strings.TrimSpace(v.Buffer())
-}
-
-func (gui *Gui) currentViewName(g *gocui.Gui) string {
-	currentView := g.CurrentView()
 	return currentView.Name()
 }
 
-func (gui *Gui) resizeCurrentPopupPanel(g *gocui.Gui) error {
-	v := g.CurrentView()
-	if v.Name() == "commitMessage" || v.Name() == "confirmation" {
-		return gui.resizePopupPanel(g, v)
+func (gui *Gui) onViewTabClick(windowName string, tabIndex int) error {
+	tabs := gui.viewTabMap()[windowName]
+	if len(tabs) == 0 {
+		return nil
 	}
+
+	viewName := tabs[tabIndex].ViewName
+
+	context, ok := gui.helpers.View.ContextForView(viewName)
+	if !ok {
+		return nil
+	}
+
+	gui.c.Context().Push(context, types.OnFocusOpts{})
 	return nil
 }
 
-func (gui *Gui) resizePopupPanel(g *gocui.Gui, v *gocui.View) error {
-	// If the confirmation panel is already displayed, just resize the width,
-	// otherwise continue
-	content := v.Buffer()
-	x0, y0, x1, y1 := gui.getConfirmationPanelDimensions(g, content)
-	vx0, vy0, vx1, vy1 := v.Dimensions()
-	if vx0 == x0 && vy0 == y0 && vx1 == x1 && vy1 == y1 {
+func (gui *Gui) handleNextTab() error {
+	view := getTabbedView(gui)
+	if view == nil {
 		return nil
 	}
-	gui.Log.Info(gui.Tr.SLocalize("resizingPopupPanel"))
-	_, err := g.SetView(v.Name(), x0, y0, x1, y1, 0)
-	return err
+
+	for _, context := range gui.State.Contexts.Flatten() {
+		if context.GetViewName() == view.Name() {
+			return gui.onViewTabClick(
+				context.GetWindowName(),
+				utils.ModuloWithWrap(view.TabIndex+1, len(view.Tabs)),
+			)
+		}
+	}
+
+	return nil
+}
+
+func (gui *Gui) handlePrevTab() error {
+	view := getTabbedView(gui)
+	if view == nil {
+		return nil
+	}
+
+	for _, context := range gui.State.Contexts.Flatten() {
+		if context.GetViewName() == view.Name() {
+			return gui.onViewTabClick(
+				context.GetWindowName(),
+				utils.ModuloWithWrap(view.TabIndex-1, len(view.Tabs)),
+			)
+		}
+	}
+
+	return nil
+}
+
+func getTabbedView(gui *Gui) *gocui.View {
+	// It safe assumption that only static contexts have tabs
+	context := gui.c.Context().CurrentStatic()
+	view, _ := gui.g.View(context.GetViewName())
+	return view
+}
+
+func (gui *Gui) render() {
+	gui.c.OnUIThread(func() error { return nil })
+}
+
+// postRefreshUpdate is to be called on a context after the state that it depends on has been refreshed
+// if the context's view is set to another context we do nothing.
+// if the context's view is the current view we trigger a focus; re-selecting the current item.
+func (gui *Gui) postRefreshUpdate(c types.Context, opts types.OnFocusOpts) {
+	t := time.Now()
+	defer func() {
+		gui.Log.Infof("postRefreshUpdate for %s took %s", c.GetKey(), time.Since(t))
+	}()
+
+	c.HandleRender()
+
+	// The render may have given the context its first item, or taken its last one
+	// away, which decides whether its view draws a selection at all.
+	gui.State.ContextMgr.UpdateSelectionHighlights()
+
+	if gui.currentViewName() == c.GetInputViewName() {
+		c.HandleFocus(opts)
+	} else {
+		// The FocusLine call is included in the HandleFocus method which we
+		// call for focused views above; but we need to call it here for
+		// non-focused views to ensure that an inactive selection is painted
+		// correctly, and that integration tests see the up to date selection
+		// state.
+		c.FocusLine(!opts.KeepScrollPosition)
+		if opts.SkipMainViewUpdate {
+			return
+		}
+
+		currentCtx := gui.State.ContextMgr.Current()
+		if currentCtx.GetKey() == context.NORMAL_MAIN_CONTEXT_KEY || currentCtx.GetKey() == context.NORMAL_SECONDARY_CONTEXT_KEY {
+			sidePanelContext := gui.State.ContextMgr.NextInStack(currentCtx)
+			if sidePanelContext != nil && sidePanelContext.GetKey() == c.GetKey() {
+				sidePanelContext.HandleRenderToMain()
+			}
+		} else if c.GetKey() == gui.State.ContextMgr.CurrentStatic().GetKey() {
+			// If our view is not the current one, but it is the current static context, then this
+			// can only mean that a popup is showing. In that case we want to refresh the main view
+			// behind the popup.
+			c.HandleRenderToMain()
+		}
+	}
 }

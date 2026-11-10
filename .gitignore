@@ -3,12 +3,6 @@
 # Logs
 *.log
 
-# Hidden
-.*
-
-# TODO
-TODO.*
-
 # Notes
 *.notes
 
@@ -16,11 +10,27 @@ TODO.*
 test/repos/repo
 coverage.txt
 
+# JetBrains stuff
+.idea/
+
 # Binaries
 lazygit
+lazygit.exe
 
-# Exceptions
-!.gitignore
-!.goreleaser.yml
-!.circleci/
-!.github/
+test/git_server/data
+
+test/_results/**
+
+oryxBuildBinary
+__debug_bin*
+
+.worktrees
+demo/output/*
+
+coverage.out
+
+# Nix
+result
+result-*
+.direnv
+.envrc

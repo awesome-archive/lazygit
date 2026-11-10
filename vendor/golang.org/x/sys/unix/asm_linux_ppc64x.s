@@ -2,9 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build linux
-// +build ppc64 ppc64le
-// +build !gccgo
+//go:build linux && (ppc64 || ppc64le) && gc
 
 #include "textflag.h"
 
@@ -16,10 +14,14 @@
 // The runtime may know about them.
 
 TEXT ·Syscall(SB),NOSPLIT,$0-56
-	BR	syscall·Syscall(SB)
+	MOVD	$syscall·Syscall(SB), R31
+	MOVD	R31, CTR
+	JMP	(CTR)
 
 TEXT ·Syscall6(SB),NOSPLIT,$0-80
-	BR	syscall·Syscall6(SB)
+	MOVD	$syscall·Syscall6(SB), R31
+	MOVD	R31, CTR
+	JMP	(CTR)
 
 TEXT ·SyscallNoError(SB),NOSPLIT,$0-48
 	BL	runtime·entersyscall(SB)
@@ -37,10 +39,14 @@ TEXT ·SyscallNoError(SB),NOSPLIT,$0-48
 	RET
 
 TEXT ·RawSyscall(SB),NOSPLIT,$0-56
-	BR	syscall·RawSyscall(SB)
+	MOVD	$syscall·RawSyscall(SB), R31
+	MOVD	R31, CTR
+	JMP	(CTR)
 
 TEXT ·RawSyscall6(SB),NOSPLIT,$0-80
-	BR	syscall·RawSyscall6(SB)
+	MOVD	$syscall·RawSyscall6(SB), R31
+	MOVD	R31, CTR
+	JMP	(CTR)
 
 TEXT ·RawSyscallNoError(SB),NOSPLIT,$0-48
 	MOVD	a1+8(FP), R3

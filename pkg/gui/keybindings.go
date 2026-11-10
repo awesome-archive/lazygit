@@ -1,484 +1,412 @@
 package gui
 
 import (
-	"github.com/jesseduffield/gocui"
+	"errors"
+	"log"
+
+	"github.com/jesseduffield/lazygit/pkg/config"
+	"github.com/jesseduffield/lazygit/pkg/gocui"
+	"github.com/jesseduffield/lazygit/pkg/gui/context"
+	"github.com/jesseduffield/lazygit/pkg/gui/controllers/helpers"
+	"github.com/jesseduffield/lazygit/pkg/gui/types"
 )
 
-// Binding - a keybinding mapping a key and modifier to a handler. The keypress
-// is only handled if the given view has focus, or handled globally if the view
-// is ""
-type Binding struct {
-	ViewName    string
-	Handler     func(*gocui.Gui, *gocui.View) error
-	Key         interface{} // FIXME: find out how to get `gocui.Key | rune`
-	Modifier    gocui.Modifier
-	KeyReadable string
-	Description string
+func (gui *Gui) noPopupPanel(f func() error) func() error {
+	return func() error {
+		if gui.helpers.Confirmation.IsPopupPanelFocused() {
+			return nil
+		}
+
+		return f()
+	}
 }
 
-// GetDisplayStrings returns the display string of a file
-func (b *Binding) GetDisplayStrings() []string {
-	return []string{b.GetKey(), b.Description}
+func (gui *Gui) outsideFilterMode(f func() error) func() error {
+	return func() error {
+		if !gui.validateNotInFilterMode() {
+			return nil
+		}
+
+		return f()
+	}
 }
 
-// GetKey is a function.
-func (b *Binding) GetKey() string {
-	r, ok := b.Key.(rune)
-	key := ""
+func (gui *Gui) validateNotInFilterMode() bool {
+	if gui.State.Modes.Filtering.Active() {
+		gui.c.Confirm(types.ConfirmOpts{
+			Title:         gui.c.Tr.MustExitFilterModeTitle,
+			Prompt:        gui.c.Tr.MustExitFilterModePrompt,
+			HandleConfirm: gui.helpers.Mode.ExitFilterMode,
+		})
 
-	if ok {
-		key = string(r)
-	} else if b.KeyReadable != "" {
-		key = b.KeyReadable
+		return false
 	}
-
-	return key
+	return true
 }
 
-// GetKeybindings is a function.
-func (gui *Gui) GetKeybindings() []*Binding {
-	bindings := []*Binding{
-		{
-			ViewName: "",
-			Key:      'q',
-			Modifier: gocui.ModNone,
-			Handler:  gui.quit,
-		}, {
-			ViewName: "",
-			Key:      gocui.KeyCtrlC,
-			Modifier: gocui.ModNone,
-			Handler:  gui.quit,
-		}, {
-			ViewName: "",
-			Key:      gocui.KeyEsc,
-			Modifier: gocui.ModNone,
-			Handler:  gui.quit,
-		}, {
-			ViewName: "",
-			Key:      gocui.KeyPgup,
-			Modifier: gocui.ModNone,
-			Handler:  gui.scrollUpMain,
-		}, {
-			ViewName: "",
-			Key:      gocui.KeyPgdn,
-			Modifier: gocui.ModNone,
-			Handler:  gui.scrollDownMain,
-		}, {
-			ViewName: "",
-			Key:      gocui.KeyCtrlU,
-			Modifier: gocui.ModNone,
-			Handler:  gui.scrollUpMain,
-		}, {
-			ViewName: "",
-			Key:      gocui.KeyCtrlD,
-			Modifier: gocui.ModNone,
-			Handler:  gui.scrollDownMain,
-		}, {
-			ViewName:    "",
-			Key:         'P',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.pushFiles,
-			Description: gui.Tr.SLocalize("push"),
-		}, {
-			ViewName:    "",
-			Key:         'p',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.pullFiles,
-			Description: gui.Tr.SLocalize("pull"),
-		}, {
-			ViewName:    "",
-			Key:         'R',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleRefresh,
-			Description: gui.Tr.SLocalize("refresh"),
-		}, {
-			ViewName: "",
-			Key:      'x',
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleCreateOptionsMenu,
-		}, {
-			ViewName:    "status",
-			Key:         'e',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleEditConfig,
-			Description: gui.Tr.SLocalize("EditConfig"),
-		}, {
-			ViewName:    "status",
-			Key:         'o',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleOpenConfig,
-			Description: gui.Tr.SLocalize("OpenConfig"),
-		}, {
-			ViewName:    "status",
-			Key:         'u',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleCheckForUpdate,
-			Description: gui.Tr.SLocalize("checkForUpdate"),
-		}, {
-			ViewName:    "status",
-			Key:         's',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleCreateRecentReposMenu,
-			Description: gui.Tr.SLocalize("SwitchRepo"),
-		},
-		{
-			ViewName:    "files",
-			Key:         'c',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleCommitPress,
-			Description: gui.Tr.SLocalize("CommitChanges"),
-		}, {
-			ViewName:    "files",
-			Key:         'A',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleAmendCommitPress,
-			Description: gui.Tr.SLocalize("AmendLastCommit"),
-		}, {
-			ViewName:    "files",
-			Key:         'C',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleCommitEditorPress,
-			Description: gui.Tr.SLocalize("CommitChangesWithEditor"),
-		}, {
-			ViewName:    "files",
-			Key:         gocui.KeySpace,
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleFilePress,
-			KeyReadable: "space",
-			Description: gui.Tr.SLocalize("toggleStaged"),
-		}, {
-			ViewName:    "files",
-			Key:         'd',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleFileRemove,
-			Description: gui.Tr.SLocalize("removeFile"),
-		}, {
-			ViewName:    "files",
-			Key:         'm',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleSwitchToMerge,
-			Description: gui.Tr.SLocalize("resolveMergeConflicts"),
-		}, {
-			ViewName:    "files",
-			Key:         'e',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleFileEdit,
-			Description: gui.Tr.SLocalize("editFile"),
-		}, {
-			ViewName:    "files",
-			Key:         'o',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleFileOpen,
-			Description: gui.Tr.SLocalize("openFile"),
-		}, {
-			ViewName:    "files",
-			Key:         'i',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleIgnoreFile,
-			Description: gui.Tr.SLocalize("ignoreFile"),
-		}, {
-			ViewName:    "files",
-			Key:         'r',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleRefreshFiles,
-			Description: gui.Tr.SLocalize("refreshFiles"),
-		}, {
-			ViewName:    "files",
-			Key:         'S',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleStashSave,
-			Description: gui.Tr.SLocalize("stashFiles"),
-		}, {
-			ViewName:    "files",
-			Key:         'M',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleAbortMerge,
-			Description: gui.Tr.SLocalize("abortMerge"),
-		}, {
-			ViewName:    "files",
-			Key:         'a',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleStageAll,
-			Description: gui.Tr.SLocalize("toggleStagedAll"),
-		}, {
-			ViewName:    "files",
-			Key:         't',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleAddPatch,
-			Description: gui.Tr.SLocalize("addPatch"),
-		}, {
-			ViewName:    "files",
-			Key:         'D',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleResetHard,
-			Description: gui.Tr.SLocalize("resetHard"),
-		}, {
-			ViewName:    "files",
-			Key:         gocui.KeyEnter,
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleSwitchToStagingPanel,
-			Description: gui.Tr.SLocalize("StageLines"),
-			KeyReadable: "enter",
-		}, {
-			ViewName: "main",
-			Key:      gocui.KeyEsc,
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleEscapeMerge,
-		}, {
-			ViewName: "main",
-			Key:      gocui.KeySpace,
-			Modifier: gocui.ModNone,
-			Handler:  gui.handlePickHunk,
-		}, {
-			ViewName: "main",
-			Key:      'b',
-			Modifier: gocui.ModNone,
-			Handler:  gui.handlePickBothHunks,
-		}, {
-			ViewName: "main",
-			Key:      gocui.KeyArrowLeft,
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleSelectPrevConflict,
-		}, {
-			ViewName: "main",
-			Key:      gocui.KeyArrowRight,
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleSelectNextConflict,
-		}, {
-			ViewName: "main",
-			Key:      gocui.KeyArrowUp,
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleSelectTop,
-		}, {
-			ViewName: "main",
-			Key:      gocui.KeyArrowDown,
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleSelectBottom,
-		}, {
-			ViewName: "main",
-			Key:      'h',
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleSelectPrevConflict,
-		}, {
-			ViewName: "main",
-			Key:      'l',
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleSelectNextConflict,
-		}, {
-			ViewName: "main",
-			Key:      'k',
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleSelectTop,
-		}, {
-			ViewName: "main",
-			Key:      'j',
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleSelectBottom,
-		}, {
-			ViewName: "main",
-			Key:      'z',
-			Modifier: gocui.ModNone,
-			Handler:  gui.handlePopFileSnapshot,
-		}, {
-			ViewName:    "branches",
-			Key:         gocui.KeySpace,
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleBranchPress,
-			KeyReadable: "space",
-			Description: gui.Tr.SLocalize("checkout"),
-		}, {
-			ViewName:    "branches",
-			Key:         'o',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleCreatePullRequestPress,
-			Description: gui.Tr.SLocalize("createPullRequest"),
-		}, {
-			ViewName:    "branches",
-			Key:         'c',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleCheckoutByName,
-			Description: gui.Tr.SLocalize("checkoutByName"),
-		}, {
-			ViewName:    "branches",
-			Key:         'F',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleForceCheckout,
-			Description: gui.Tr.SLocalize("forceCheckout"),
-		}, {
-			ViewName:    "branches",
-			Key:         'n',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleNewBranch,
-			Description: gui.Tr.SLocalize("newBranch"),
-		}, {
-			ViewName:    "branches",
-			Key:         'd',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleDeleteBranch,
-			Description: gui.Tr.SLocalize("deleteBranch"),
-		}, {
-			ViewName:    "branches",
-			Key:         'm',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleMerge,
-			Description: gui.Tr.SLocalize("mergeIntoCurrentBranch"),
-		}, {
-			ViewName:    "commits",
-			Key:         's',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleCommitSquashDown,
-			Description: gui.Tr.SLocalize("squashDown"),
-		}, {
-			ViewName:    "commits",
-			Key:         'r',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleRenameCommit,
-			Description: gui.Tr.SLocalize("renameCommit"),
-		}, {
-			ViewName:    "commits",
-			Key:         'R',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleRenameCommitEditor,
-			Description: gui.Tr.SLocalize("renameCommitEditor"),
-		}, {
-			ViewName:    "commits",
-			Key:         'g',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleResetToCommit,
-			Description: gui.Tr.SLocalize("resetToThisCommit"),
-		}, {
-			ViewName:    "commits",
-			Key:         'f',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleCommitFixup,
-			Description: gui.Tr.SLocalize("fixupCommit"),
-		}, {
-			ViewName:    "stash",
-			Key:         gocui.KeySpace,
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleStashApply,
-			KeyReadable: "space",
-			Description: gui.Tr.SLocalize("apply"),
-		}, {
-			ViewName:    "stash",
-			Key:         'g',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleStashPop,
-			Description: gui.Tr.SLocalize("pop"),
-		}, {
-			ViewName:    "stash",
-			Key:         'd',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleStashDrop,
-			Description: gui.Tr.SLocalize("drop"),
-		}, {
-			ViewName: "commitMessage",
-			Key:      gocui.KeyEnter,
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleCommitConfirm,
-		}, {
-			ViewName: "commitMessage",
-			Key:      gocui.KeyEsc,
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleCommitClose,
-		}, {
-			ViewName: "menu",
-			Key:      gocui.KeyEsc,
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleMenuClose,
-		}, {
-			ViewName: "menu",
-			Key:      'q',
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleMenuClose,
-		}, {
-			ViewName:    "staging",
-			Key:         gocui.KeyEsc,
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleStagingEscape,
-			KeyReadable: "esc",
-			Description: gui.Tr.SLocalize("EscapeStaging"),
-		}, {
-			ViewName: "staging",
-			Key:      gocui.KeyArrowUp,
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleStagingPrevLine,
-		}, {
-			ViewName: "staging",
-			Key:      gocui.KeyArrowDown,
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleStagingNextLine,
-		}, {
-			ViewName: "staging",
-			Key:      'k',
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleStagingPrevLine,
-		}, {
-			ViewName: "staging",
-			Key:      'j',
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleStagingNextLine,
-		}, {
-			ViewName: "staging",
-			Key:      gocui.KeyArrowLeft,
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleStagingPrevHunk,
-		}, {
-			ViewName: "staging",
-			Key:      gocui.KeyArrowRight,
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleStagingNextHunk,
-		}, {
-			ViewName: "staging",
-			Key:      'h',
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleStagingPrevHunk,
-		}, {
-			ViewName: "staging",
-			Key:      'l',
-			Modifier: gocui.ModNone,
-			Handler:  gui.handleStagingNextHunk,
-		}, {
-			ViewName:    "staging",
-			Key:         gocui.KeySpace,
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleStageLine,
-			Description: gui.Tr.SLocalize("StageLine"),
-		}, {
-			ViewName:    "staging",
-			Key:         'a',
-			Modifier:    gocui.ModNone,
-			Handler:     gui.handleStageHunk,
-			Description: gui.Tr.SLocalize("StageHunk"),
-		},
+// only to be called from the cheatsheet generate script. This mutates the Gui struct.
+func (gui *Gui) GetCheatsheetKeybindings() []*types.Binding {
+	gui.g = &gocui.Gui{}
+	if err := gui.createAllViews(); err != nil {
+		panic(err)
 	}
-
-	// Would make these keybindings global but that interferes with editing
-	// input in the confirmation panel
-	for _, viewName := range []string{"status", "files", "branches", "commits", "stash", "menu"} {
-		bindings = append(bindings, []*Binding{
-			{ViewName: viewName, Key: gocui.KeyTab, Modifier: gocui.ModNone, Handler: gui.nextView},
-			{ViewName: viewName, Key: gocui.KeyArrowLeft, Modifier: gocui.ModNone, Handler: gui.previousView},
-			{ViewName: viewName, Key: gocui.KeyArrowRight, Modifier: gocui.ModNone, Handler: gui.nextView},
-			{ViewName: viewName, Key: gocui.KeyArrowUp, Modifier: gocui.ModNone, Handler: gui.cursorUp},
-			{ViewName: viewName, Key: gocui.KeyArrowDown, Modifier: gocui.ModNone, Handler: gui.cursorDown},
-			{ViewName: viewName, Key: 'h', Modifier: gocui.ModNone, Handler: gui.previousView},
-			{ViewName: viewName, Key: 'l', Modifier: gocui.ModNone, Handler: gui.nextView},
-			{ViewName: viewName, Key: 'k', Modifier: gocui.ModNone, Handler: gui.cursorUp},
-			{ViewName: viewName, Key: 'j', Modifier: gocui.ModNone, Handler: gui.cursorDown},
-		}...)
-	}
-
+	// need to instantiate views
+	gui.helpers = helpers.NewStubHelpers()
+	gui.State = &GuiRepoState{}
+	gui.State.Contexts = gui.contextTree()
+	gui.State.ContextMgr = NewContextMgr(gui, gui.State.Contexts)
+	gui.resetHelpersAndControllers()
+	bindings, _ := gui.GetInitialKeybindings()
 	return bindings
 }
 
-func (gui *Gui) keybindings(g *gocui.Gui) error {
-	bindings := gui.GetKeybindings()
+func (gui *Gui) keybindingOpts() types.KeybindingsOpts {
+	keybindingConfig := gui.c.UserConfig().Keybinding
+
+	guards := types.KeybindingGuards{
+		OutsideFilterMode: gui.outsideFilterMode,
+		NoPopupPanel:      gui.noPopupPanel,
+	}
+
+	return types.KeybindingsOpts{
+		GetKeys: config.GetValidatedKeyBindingKeys,
+		Config:  keybindingConfig,
+		Guards:  guards,
+	}
+}
+
+func (gui *Gui) GetInitialKeybindings() ([]*types.Binding, []*gocui.ViewMouseBinding) {
+	opts := gui.c.KeybindingsOpts()
+
+	bindings := []*types.Binding{
+		{
+			ViewName:    "",
+			Keys:        opts.GetKeys(opts.Config.Universal.OpenRecentRepos),
+			Handler:     opts.Guards.NoPopupPanel(gui.helpers.Repos.CreateRecentReposMenu),
+			Description: gui.c.Tr.SwitchRepo,
+		},
+		{
+			ViewName:    "",
+			Keys:        opts.GetKeys(opts.Config.Universal.ScrollUpMain),
+			Handler:     gui.scrollUpMain,
+			Alternative: "fn+up/shift+k",
+			Description: gui.c.Tr.ScrollUpMainWindow,
+		},
+		{
+			ViewName:    "",
+			Keys:        opts.GetKeys(opts.Config.Universal.ScrollDownMain),
+			Handler:     gui.scrollDownMain,
+			Alternative: "fn+down/shift+j",
+			Description: gui.c.Tr.ScrollDownMainWindow,
+		},
+		{
+			ViewName:          "files",
+			Keys:              opts.GetKeys(opts.Config.Universal.CopyToClipboard),
+			Handler:           gui.handleCopySelectedSideContextItemToClipboard,
+			GetDisabledReason: gui.getCopySelectedSideContextItemToClipboardDisabledReason,
+			Description:       gui.c.Tr.CopyPathToClipboard,
+		},
+		{
+			ViewName:          "localBranches",
+			Keys:              opts.GetKeys(opts.Config.Universal.CopyToClipboard),
+			Handler:           gui.handleCopySelectedSideContextItemToClipboard,
+			GetDisabledReason: gui.getCopySelectedSideContextItemToClipboardDisabledReason,
+			Description:       gui.c.Tr.CopyBranchNameToClipboard,
+		},
+		{
+			ViewName:          "remoteBranches",
+			Keys:              opts.GetKeys(opts.Config.Universal.CopyToClipboard),
+			Handler:           gui.handleCopySelectedSideContextItemToClipboard,
+			GetDisabledReason: gui.getCopySelectedSideContextItemToClipboardDisabledReason,
+			Description:       gui.c.Tr.CopyBranchNameToClipboard,
+		},
+		{
+			ViewName:          "tags",
+			Keys:              opts.GetKeys(opts.Config.Universal.CopyToClipboard),
+			Handler:           gui.handleCopySelectedSideContextItemToClipboard,
+			GetDisabledReason: gui.getCopySelectedSideContextItemToClipboardDisabledReason,
+			Description:       gui.c.Tr.CopyTagToClipboard,
+		},
+		{
+			ViewName:          "commits",
+			Keys:              opts.GetKeys(opts.Config.Universal.CopyToClipboard),
+			Handler:           gui.handleCopySelectedSideContextItemCommitHashToClipboard,
+			GetDisabledReason: gui.getCopySelectedSideContextItemToClipboardDisabledReason,
+			Description:       gui.c.Tr.CopyCommitHashToClipboard,
+		},
+		{
+			ViewName:    "commits",
+			Keys:        opts.GetKeys(opts.Config.Commits.ResetCherryPick),
+			Handler:     gui.helpers.CherryPick.Reset,
+			Description: gui.c.Tr.ResetCherryPick,
+		},
+		{
+			ViewName:          "reflogCommits",
+			Keys:              opts.GetKeys(opts.Config.Universal.CopyToClipboard),
+			Handler:           gui.handleCopySelectedSideContextItemToClipboard,
+			GetDisabledReason: gui.getCopySelectedSideContextItemToClipboardDisabledReason,
+			Description:       gui.c.Tr.CopyCommitHashToClipboard,
+		},
+		{
+			ViewName:          "subCommits",
+			Keys:              opts.GetKeys(opts.Config.Universal.CopyToClipboard),
+			Handler:           gui.handleCopySelectedSideContextItemCommitHashToClipboard,
+			GetDisabledReason: gui.getCopySelectedSideContextItemToClipboardDisabledReason,
+			Description:       gui.c.Tr.CopyCommitHashToClipboard,
+		},
+		{
+			ViewName: "information",
+			Keys:     []gocui.Key{gocui.NewKeyName(gocui.MouseLeft)},
+			Handler:  gui.handleInfoClick,
+		},
+		{
+			ViewName:          "commitFiles",
+			Keys:              opts.GetKeys(opts.Config.Universal.CopyToClipboard),
+			Handler:           gui.handleCopySelectedSideContextItemToClipboard,
+			GetDisabledReason: gui.getCopySelectedSideContextItemToClipboardDisabledReason,
+			Description:       gui.c.Tr.CopyPathToClipboard,
+		},
+		{
+			ViewName:    "",
+			Keys:        opts.GetKeys(opts.Config.Universal.ExtrasMenu),
+			Handler:     opts.Guards.NoPopupPanel(gui.handleCreateExtrasMenuPanel),
+			Description: gui.c.Tr.OpenCommandLogMenu,
+			Tooltip:     gui.c.Tr.OpenCommandLogMenuTooltip,
+			OpensMenu:   true,
+		},
+		{
+			ViewName:    "main",
+			Keys:        []gocui.Key{gocui.NewKeyName(gocui.MouseWheelDown)},
+			Handler:     gui.scrollDownMain,
+			Description: gui.c.Tr.ScrollDown,
+			Alternative: "fn+up",
+		},
+		{
+			ViewName:    "main",
+			Keys:        []gocui.Key{gocui.NewKeyName(gocui.MouseWheelUp)},
+			Handler:     gui.scrollUpMain,
+			Description: gui.c.Tr.ScrollUp,
+			Alternative: "fn+down",
+		},
+		{
+			ViewName: "secondary",
+			Keys:     []gocui.Key{gocui.NewKeyName(gocui.MouseWheelDown)},
+			Handler:  gui.scrollDownSecondary,
+		},
+		{
+			ViewName: "secondary",
+			Keys:     []gocui.Key{gocui.NewKeyName(gocui.MouseWheelUp)},
+			Handler:  gui.scrollUpSecondary,
+		},
+		{
+			ViewName: "confirmation",
+			Keys:     opts.GetKeys(opts.Config.Universal.PrevItem),
+			Handler:  gui.scrollUpConfirmationPanel,
+		},
+		{
+			ViewName: "confirmation",
+			Keys:     opts.GetKeys(opts.Config.Universal.NextItem),
+			Handler:  gui.scrollDownConfirmationPanel,
+		},
+		{
+			ViewName: "confirmation",
+			Keys:     []gocui.Key{gocui.NewKeyName(gocui.MouseWheelUp)},
+			Handler:  gui.scrollUpConfirmationPanel,
+		},
+		{
+			ViewName: "confirmation",
+			Keys:     []gocui.Key{gocui.NewKeyName(gocui.MouseWheelDown)},
+			Handler:  gui.scrollDownConfirmationPanel,
+		},
+		{
+			ViewName: "confirmation",
+			Keys:     opts.GetKeys(opts.Config.Universal.NextPage),
+			Handler:  gui.pageDownConfirmationPanel,
+		},
+		{
+			ViewName: "confirmation",
+			Keys:     opts.GetKeys(opts.Config.Universal.PrevPage),
+			Handler:  gui.pageUpConfirmationPanel,
+		},
+		{
+			ViewName: "confirmation",
+			Keys:     opts.GetKeys(opts.Config.Universal.GotoTop),
+			Handler:  gui.goToConfirmationPanelTop,
+		},
+		{
+			ViewName: "confirmation",
+			Keys:     opts.GetKeys(opts.Config.Universal.GotoBottom),
+			Handler:  gui.goToConfirmationPanelBottom,
+		},
+		{
+			ViewName:          "submodules",
+			Keys:              opts.GetKeys(opts.Config.Universal.CopyToClipboard),
+			Handler:           gui.handleCopySelectedSideContextItemToClipboard,
+			GetDisabledReason: gui.getCopySelectedSideContextItemToClipboardDisabledReason,
+			Description:       gui.c.Tr.CopySubmoduleNameToClipboard,
+		},
+		{
+			ViewName: "extras",
+			Keys:     []gocui.Key{gocui.NewKeyName(gocui.MouseWheelUp)},
+			Handler:  gui.scrollUpExtra,
+		},
+		{
+			ViewName: "extras",
+			Keys:     []gocui.Key{gocui.NewKeyName(gocui.MouseWheelDown)},
+			Handler:  gui.scrollDownExtra,
+		},
+		{
+			ViewName: "extras",
+			Tag:      "navigation",
+			Keys:     opts.GetKeys(opts.Config.Universal.PrevItem),
+			Handler:  gui.scrollUpExtra,
+		},
+		{
+			ViewName: "extras",
+			Tag:      "navigation",
+			Keys:     opts.GetKeys(opts.Config.Universal.NextItem),
+			Handler:  gui.scrollDownExtra,
+		},
+		{
+			ViewName: "extras",
+			Keys:     opts.GetKeys(opts.Config.Universal.NextPage),
+			Handler:  gui.pageDownExtrasPanel,
+		},
+		{
+			ViewName: "extras",
+			Keys:     opts.GetKeys(opts.Config.Universal.PrevPage),
+			Handler:  gui.pageUpExtrasPanel,
+		},
+		{
+			ViewName: "extras",
+			Keys:     opts.GetKeys(opts.Config.Universal.GotoTop),
+			Handler:  gui.goToExtrasPanelTop,
+		},
+		{
+			ViewName: "extras",
+			Keys:     opts.GetKeys(opts.Config.Universal.GotoBottom),
+			Handler:  gui.goToExtrasPanelBottom,
+		},
+		{
+			ViewName: "extras",
+			Tag:      "navigation",
+			Keys:     []gocui.Key{gocui.NewKeyName(gocui.MouseLeft)},
+			Handler:  gui.handleFocusCommandLog,
+		},
+	}
+
+	contexts := gui.State.Contexts.Flatten()
+	mouseKeybindings := make([]*gocui.ViewMouseBinding, 0, len(contexts))
+	for _, c := range contexts {
+		viewName := c.GetViewName()
+		for _, binding := range c.GetKeybindings(opts) {
+			// TODO: move all mouse keybindings into the mouse keybindings approach below
+			binding.ViewName = viewName
+			bindings = append(bindings, binding)
+		}
+
+		mouseKeybindings = append(mouseKeybindings, c.GetMouseKeybindings(opts)...)
+	}
+
+	bindings = append(bindings, []*types.Binding{
+		{
+			ViewName:    "",
+			Keys:        opts.GetKeys(opts.Config.Universal.NextTab),
+			Handler:     opts.Guards.NoPopupPanel(gui.handleNextTab),
+			Description: gui.c.Tr.NextTab,
+			Tag:         "navigation",
+		},
+		{
+			ViewName:    "",
+			Keys:        opts.GetKeys(opts.Config.Universal.PrevTab),
+			Handler:     opts.Guards.NoPopupPanel(gui.handlePrevTab),
+			Description: gui.c.Tr.PrevTab,
+			Tag:         "navigation",
+		},
+	}...)
+
+	return bindings, mouseKeybindings
+}
+
+func (gui *Gui) GetInitialKeybindingsWithCustomCommands() ([]*types.Binding, []*gocui.ViewMouseBinding) {
+	// if the search or filter prompt is open, we only want the keybindings for
+	// that context. It shouldn't be possible, for example, to open a menu while
+	// the prompt is showing; you first need to confirm or cancel the search/filter.
+	if currentContext := gui.State.ContextMgr.Current(); currentContext.GetKey() == context.SEARCH_CONTEXT_KEY {
+		bindings := currentContext.GetKeybindings(gui.c.KeybindingsOpts())
+		viewName := currentContext.GetViewName()
+		for _, binding := range bindings {
+			binding.ViewName = viewName
+		}
+		return bindings, nil
+	}
+
+	bindings, mouseBindings := gui.GetInitialKeybindings()
+	customBindings, err := gui.CustomCommandsClient.GetCustomCommandKeybindings()
+	if err != nil {
+		log.Fatal(err)
+	}
+	// prepending because we want to give our custom keybindings precedence over default keybindings
+	bindings = append(customBindings, bindings...)
+	return bindings, mouseBindings
+}
+
+func (gui *Gui) resetKeybindings() {
+	gui.g.DeleteAllKeybindings()
+
+	bindings, mouseBindings := gui.GetInitialKeybindingsWithCustomCommands()
 
 	for _, binding := range bindings {
-		if err := g.SetKeybinding(binding.ViewName, binding.Key, binding.Modifier, binding.Handler); err != nil {
-			return err
+		gui.SetKeybinding(binding)
+	}
+
+	for _, binding := range mouseBindings {
+		gui.SetMouseKeybinding(binding)
+	}
+
+	for _, values := range gui.viewTabMap() {
+		for _, value := range values {
+			viewName := value.ViewName
+			tabClickCallback := func(tabIndex int) error {
+				return gui.onViewTabClick(gui.helpers.Window.WindowForView(viewName), tabIndex)
+			}
+
+			gui.g.SetTabClickBinding(viewName, tabClickCallback)
 		}
 	}
-	return nil
+}
+
+func (gui *Gui) SetKeybinding(binding *types.Binding) {
+	handler := func(g *gocui.Gui, v *gocui.View) error {
+		return gui.callKeybindingHandler(binding)
+	}
+
+	for _, key := range binding.Keys {
+		gui.g.SetKeybinding(binding.ViewName, key, handler)
+	}
+}
+
+func (gui *Gui) SetMouseKeybinding(binding *gocui.ViewMouseBinding) {
+	gui.g.SetViewClickBinding(binding)
+}
+
+func (gui *Gui) callKeybindingHandler(binding *types.Binding) error {
+	if binding.GetDisabledReason != nil {
+		if disabledReason := binding.GetDisabledReason(); disabledReason != nil {
+			if disabledReason.AllowFurtherDispatching {
+				return &types.ErrKeybindingNotHandled{DisabledReason: disabledReason}
+			}
+
+			if disabledReason.ShowErrorInPanel {
+				return errors.New(disabledReason.Text)
+			}
+
+			if len(disabledReason.Text) > 0 {
+				gui.c.ErrorToast(gui.Tr.DisabledMenuItemPrefix + disabledReason.Text)
+			}
+			return nil
+		}
+	}
+
+	return binding.Handler()
 }

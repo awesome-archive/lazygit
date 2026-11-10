@@ -2,25 +2,13 @@ package i18n
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
+	"runtime"
 	"testing"
-
-	"github.com/nicksnyder/go-i18n/v2/i18n"
 
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
-
-func getDummyLog() *logrus.Entry {
-	log := logrus.New()
-	log.Out = ioutil.Discard
-	return log.WithField("test", "test")
-}
-
-// TestNewLocalizer is a function.
-func TestNewLocalizer(t *testing.T) {
-	assert.NotNil(t, NewLocalizer(getDummyLog()))
-}
 
 // TestDetectLanguage is a function.
 func TestDetectLanguage(t *testing.T) {
@@ -49,43 +37,85 @@ func TestDetectLanguage(t *testing.T) {
 	}
 }
 
-// TestLocalizer is a function.
-func TestLocalizer(t *testing.T) {
-	type scenario struct {
-		userLang string
-		test     func(*Localizer)
+// Can't use utils.NewDummyLog() because of a cyclic dependency
+func newDummyLog() *logrus.Entry {
+	log := logrus.New()
+	log.Out = io.Discard
+	return log.WithField("test", "test")
+}
+
+func TestNewTranslationSetFromConfig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// These tests are based on setting the LANG environment variable, which
+		// isn't respected on Windows.
+		t.Skip("Skipping test on Windows")
 	}
 
-	scenarios := []scenario{
+	scenarios := []struct {
+		name           string
+		configLanguage string
+		envLanguage    string
+		expected       string
+		expectedErr    bool
+	}{
 		{
-			"C",
-			func(l *Localizer) {
-				assert.EqualValues(t, "C", l.GetLanguage())
-				assert.Equal(t, "Diff", l.Localize(&i18n.LocalizeConfig{
-					DefaultMessage: &i18n.Message{
-						ID: "DiffTitle",
-					},
-				}))
-				assert.Equal(t, "Diff", l.SLocalize("DiffTitle"))
-				assert.Equal(t, "Are you sure you want to delete the branch test?", l.TemplateLocalize("DeleteBranchMessage", Teml{"selectedBranchName": "test"}))
-			},
+			name:           "configLanguage is nl",
+			configLanguage: "nl",
+			envLanguage:    "en_US",
+			expected:       "nl",
+			expectedErr:    false,
 		},
 		{
-			"nl",
-			func(l *Localizer) {
-				assert.EqualValues(t, "nl", l.GetLanguage())
-				assert.Equal(t, "Diff", l.Localize(&i18n.LocalizeConfig{
-					DefaultMessage: &i18n.Message{
-						ID: "DiffTitle",
-					},
-				}))
-				assert.Equal(t, "Diff", l.SLocalize("DiffTitle"))
-				assert.Equal(t, "Weet je zeker dat je branch test wilt verwijderen?", l.TemplateLocalize("DeleteBranchMessage", Teml{"selectedBranchName": "test"}))
-			},
+			name:           "configLanguage is an unsupported language",
+			configLanguage: "xy",
+			envLanguage:    "en_US",
+			expectedErr:    true,
+		},
+		{
+			name:           "auto-detection without LANG set",
+			configLanguage: "auto",
+			envLanguage:    "",
+			expected:       "en",
+			expectedErr:    false,
+		},
+		{
+			name:           "auto-detection with LANG set to nl_NL",
+			configLanguage: "auto",
+			envLanguage:    "nl_NL",
+			expected:       "nl",
+			expectedErr:    false,
+		},
+		{
+			name:           "auto-detection with LANG set to zh-CN",
+			configLanguage: "auto",
+			envLanguage:    "zh-CN",
+			expected:       "zh-CN",
+			expectedErr:    false,
+		},
+		{
+			name:           "auto-detection with LANG set to an unsupported language",
+			configLanguage: "auto",
+			envLanguage:    "xy_XY",
+			expected:       "en",
+			expectedErr:    false,
 		},
 	}
 
 	for _, s := range scenarios {
-		s.test(setupLocalizer(getDummyLog(), s.userLang))
+		t.Run(s.name, func(t *testing.T) {
+			log := newDummyLog()
+			t.Setenv("LC_ALL", "")
+			t.Setenv("LC_MESSAGES", "")
+			t.Setenv("LANG", s.envLanguage)
+			actualTranslationSet, err := NewTranslationSetFromConfig(log, s.configLanguage)
+			if s.expectedErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+
+				expectedTranslationSet, _ := newTranslationSet(log, s.expected)
+				assert.Equal(t, expectedTranslationSet, actualTranslationSet)
+			}
+		})
 	}
 }

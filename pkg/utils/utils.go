@@ -1,78 +1,17 @@
 package utils
 
 import (
-	"errors"
+	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
-	"reflect"
+	"regexp"
+	"runtime"
+	"strconv"
 	"strings"
-	"time"
 
-	"github.com/fatih/color"
+	"github.com/jesseduffield/lazygit/pkg/gocui"
 )
-
-// SplitLines takes a multiline string and splits it on newlines
-// currently we are also stripping \r's which may have adverse effects for
-// windows users (but no issues have been raised yet)
-func SplitLines(multilineString string) []string {
-	multilineString = strings.Replace(multilineString, "\r", "", -1)
-	if multilineString == "" || multilineString == "\n" {
-		return make([]string, 0)
-	}
-	lines := strings.Split(multilineString, "\n")
-	if lines[len(lines)-1] == "" {
-		return lines[:len(lines)-1]
-	}
-	return lines
-}
-
-// WithPadding pads a string as much as you want
-func WithPadding(str string, padding int) string {
-	if padding-len(str) < 0 {
-		return str
-	}
-	return str + strings.Repeat(" ", padding-len(str))
-}
-
-// ColoredString takes a string and a colour attribute and returns a colored
-// string with that attribute
-func ColoredString(str string, colorAttribute color.Attribute) string {
-	colour := color.New(colorAttribute)
-	return ColoredStringDirect(str, colour)
-}
-
-// ColoredStringDirect used for aggregating a few color attributes rather than
-// just sending a single one
-func ColoredStringDirect(str string, colour *color.Color) string {
-	return colour.SprintFunc()(fmt.Sprint(str))
-}
-
-// GetCurrentRepoName gets the repo's base name
-func GetCurrentRepoName() string {
-	pwd, err := os.Getwd()
-	if err != nil {
-		log.Fatalln(err.Error())
-	}
-	return filepath.Base(pwd)
-}
-
-// TrimTrailingNewline - Trims the trailing newline
-// TODO: replace with `chomp` after refactor
-func TrimTrailingNewline(str string) string {
-	if strings.HasSuffix(str, "\n") {
-		return str[:len(str)-1]
-	}
-	return str
-}
-
-// NormalizeLinefeeds - Removes all Windows and Mac style line feeds
-func NormalizeLinefeeds(str string) string {
-	str = strings.Replace(str, "\r\n", "\n", -1)
-	str = strings.Replace(str, "\r", "", -1)
-	return str
-}
 
 // GetProjectRoot returns the path to the root of the project. Only to be used
 // in testing contexts, as with binaries it's unlikely this path will exist on
@@ -85,153 +24,132 @@ func GetProjectRoot() string {
 	return strings.Split(dir, "lazygit")[0] + "lazygit"
 }
 
-// Loader dumps a string to be displayed as a loader
-func Loader() string {
-	characters := "|/-\\"
-	now := time.Now()
-	nanos := now.UnixNano()
-	index := nanos / 50000000 % int64(len(characters))
-	return characters[index : index+1]
-}
-
-// ResolvePlaceholderString populates a template with values
-func ResolvePlaceholderString(str string, arguments map[string]string) string {
-	for key, value := range arguments {
-		str = strings.Replace(str, "{{"+key+"}}", value, -1)
-	}
-	return str
-}
-
-// Min returns the minimum of two integers
-func Min(x, y int) int {
+func SortRange(x int, y int) (int, int) {
 	if x < y {
-		return x
+		return x, y
 	}
-	return y
+	return y, x
 }
 
-type Displayable interface {
-	GetDisplayStrings() []string
+func AsJson(i any) string {
+	bytes, _ := json.MarshalIndent(i, "", "    ")
+	return string(bytes)
 }
 
-// RenderList takes a slice of items, confirms they implement the Displayable
-// interface, then generates a list of their displaystrings to write to a panel's
-// buffer
-func RenderList(slice interface{}) (string, error) {
-	s := reflect.ValueOf(slice)
-	if s.Kind() != reflect.Slice {
-		return "", errors.New("RenderList given a non-slice type")
+// used to keep a number n between 0 and max, allowing for wraparounds
+func ModuloWithWrap(n, max int) int {
+	if max == 0 {
+		return 0
 	}
 
-	displayables := make([]Displayable, s.Len())
+	if n >= max {
+		return n % max
+	} else if n < 0 {
+		return max + n
+	}
+	return n
+}
 
-	for i := 0; i < s.Len(); i++ {
-		value, ok := s.Index(i).Interface().(Displayable)
-		if !ok {
-			return "", errors.New("item does not implement the Displayable interface")
+func FindStringSubmatch(str string, regexpStr string) (bool, []string) {
+	re := regexp.MustCompile(regexpStr)
+	match := re.FindStringSubmatch(str)
+	return len(match) > 0, match
+}
+
+func MustConvertToInt(s string) int {
+	i, err := strconv.Atoi(s)
+	if err != nil {
+		panic(err)
+	}
+	return i
+}
+
+// Safe will close tcell if a panic occurs so that we don't end up in a malformed
+// terminal state
+func Safe(f func()) {
+	_ = SafeWithError(func() error { f(); return nil })
+}
+
+func SafeWithError(f func() error) error {
+	panicking := true
+	defer func() {
+		if panicking && gocui.Screen != nil {
+			gocui.Screen.Fini()
 		}
-		displayables[i] = value
-	}
+	}()
 
-	return renderDisplayableList(displayables)
+	err := f()
+
+	panicking = false
+
+	return err
 }
 
-// renderDisplayableList takes a list of displayable items, obtains their display
-// strings via GetDisplayStrings() and then returns a single string containing
-// each item's string representation on its own line, with appropriate horizontal
-// padding between the item's own strings
-func renderDisplayableList(items []Displayable) (string, error) {
-	if len(items) == 0 {
-		return "", nil
-	}
-
-	stringArrays := getDisplayStringArrays(items)
-
-	if !displayArraysAligned(stringArrays) {
-		return "", errors.New("Each item must return the same number of strings to display")
-	}
-
-	padWidths := getPadWidths(stringArrays)
-	paddedDisplayStrings := getPaddedDisplayStrings(stringArrays, padWidths)
-
-	return strings.Join(paddedDisplayStrings, "\n"), nil
+// SafeFunc returns a function that runs f through Safe. Use it for functions
+// that something else runs on a goroutine of its own, such as time.AfterFunc.
+func SafeFunc(f func()) func() {
+	return func() { Safe(f) }
 }
 
-func getPadWidths(stringArrays [][]string) []int {
-	if len(stringArrays[0]) <= 1 {
-		return []int{}
-	}
-	padWidths := make([]int, len(stringArrays[0])-1)
-	for i := range padWidths {
-		for _, strings := range stringArrays {
-			if len(strings[i]) > padWidths[i] {
-				padWidths[i] = len(strings[i])
-			}
-		}
-	}
-	return padWidths
+// SafeFuncWithError is like SafeFunc, for functions that return an error, such
+// as the ones passed to errgroup.Group.Go.
+func SafeFuncWithError(f func() error) func() error {
+	return func() error { return SafeWithError(f) }
 }
 
-func getPaddedDisplayStrings(stringArrays [][]string, padWidths []int) []string {
-	paddedDisplayStrings := make([]string, len(stringArrays))
-	for i, stringArray := range stringArrays {
-		if len(stringArray) == 0 {
-			continue
-		}
-		for j, padWidth := range padWidths {
-			paddedDisplayStrings[i] += WithPadding(stringArray[j], padWidth) + " "
-		}
-		paddedDisplayStrings[i] += stringArray[len(padWidths)]
-	}
-	return paddedDisplayStrings
+func StackTrace() string {
+	buf := make([]byte, 10000)
+	n := runtime.Stack(buf, false)
+	return fmt.Sprintf("%s\n", buf[:n])
 }
 
-// displayArraysAligned returns true if every string array returned from our
-// list of displayables has the same length
-func displayArraysAligned(stringArrays [][]string) bool {
-	for _, strings := range stringArrays {
-		if len(strings) != len(stringArrays[0]) {
-			return false
-		}
-	}
-	return true
+// returns the path of the file that calls the function.
+// 'skip' is the number of stack frames to skip.
+func FilePath(skip int) string {
+	_, path, _, _ := runtime.Caller(skip)
+	return path
 }
 
-func getDisplayStringArrays(displayables []Displayable) [][]string {
-	stringArrays := make([][]string, len(displayables))
-	for i, item := range displayables {
-		stringArrays[i] = item.GetDisplayStrings()
+// ExpandTilde expands a leading "~" that refers to the current user's home
+// directory: "~" and "~/foo" become e.g. "/home/user" and "/home/user/foo". A
+// tilde anywhere other than the start, or one immediately followed by a
+// username ("~other/foo"), is left untouched, as is the path if the home
+// directory can't be determined. We expand it ourselves because lazygit runs
+// git directly, with no shell to do it for us.
+func ExpandTilde(path string) string {
+	if path != "~" && !strings.HasPrefix(path, "~/") &&
+		!(runtime.GOOS == "windows" && strings.HasPrefix(path, `~\`)) {
+		return path
 	}
-	return stringArrays
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+
+	if path == "~" {
+		return home
+	}
+	return filepath.Join(home, path[2:])
 }
 
-// IncludesString if the list contains the string
-func IncludesString(list []string, a string) bool {
-	for _, b := range list {
-		if b == a {
-			return true
-		}
+// ContractTilde is the inverse of ExpandTilde: it replaces the current user's
+// home directory at the start of a path with "~", so that paths can be shown
+// in a shorter form. Paths outside the home directory are left untouched, as
+// is the path if the home directory can't be determined.
+func ContractTilde(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
 	}
-	return false
-}
 
-// NextIndex returns the index of the element that comes after the given number
-func NextIndex(numbers []int, currentNumber int) int {
-	for index, number := range numbers {
-		if number > currentNumber {
-			return index
-		}
+	if path == home {
+		return "~"
 	}
-	return 0
-}
 
-// PrevIndex returns the index that comes before the given number, cycling if we reach the end
-func PrevIndex(numbers []int, currentNumber int) int {
-	end := len(numbers) - 1
-	for i := end; i >= 0; i -= 1 {
-		if numbers[i] < currentNumber {
-			return i
-		}
+	if rest, found := strings.CutPrefix(path, home+string(filepath.Separator)); found {
+		return "~" + string(filepath.Separator) + rest
 	}
-	return end
+
+	return path
 }
